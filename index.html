@@ -3,20 +3,19 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
-  <title>ArcGIS API - Research Dashboard (Cleaned Layers & Legend)</title>
+  <title>ArcGIS API - Research Dashboard</title>
 
   <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
 
   <style>
     html, body, #viewDiv { padding: 0; margin: 0; height: 100%; width: 100%; }
     
-    /* Measurement UI styles */
+    /* UI Styles */
     #measurements { padding: 10px; background: white; width: 200px; }
     #measurements button { width: 100%; margin-bottom: 5px; padding: 5px; cursor: pointer; background-color: #f3f3f3; border: 1px solid #ccc; }
     #measurements button:hover { background-color: #e0e0e0; }
     #measurements button.active { background-color: #0079c1; color: white; border-color: #005e95; }
 
-    /* Filter UI styles */
     #filterDiv { padding: 10px; background: white; width: 240px; }
     #layerSelect { width: 100%; padding: 5px; font-size: 14px; }
     .filter-label { font-weight: bold; display: block; margin-bottom: 5px; }
@@ -37,7 +36,7 @@
       DistanceMeasurement2D, AreaMeasurement2D, ScaleBar, Compass
     ) => {
 
-      // --- 1. Custom Basemap Setup ---
+      // --- 1. Custom Basemap ---
       const customBasemap = new Basemap({
         baseLayers: [
           new VectorTileLayer({ portalItem: { id: "e9cacfd187904614884c16aa52a21cac" } }),
@@ -54,9 +53,8 @@
       const map = new Map({ basemap: customBasemap });
       const view = new MapView({ container: "viewDiv", map: map, center: [-98, 39], zoom: 4 });
 
-      // --- 2. Load Data, Cleanup Layers, and Setup Widgets ---
+      // --- 2. Load Data ---
       
-      // Filter UI HTML
       const filterDiv = document.createElement("div");
       filterDiv.id = "filterDiv";
       filterDiv.innerHTML = `
@@ -66,7 +64,7 @@
         </select>
       `;
 
-      // Names for the first 5 layers
+      // Names for the layers in order
       const manualNames = [
         "Negative Precipitation Trend",
         "Positive Precipitation Trend",
@@ -78,62 +76,58 @@
       Layer.fromPortalItem({
         portalItem: { id: "97bdbae78254438884769a49618e1c5b" }
       }).then((layer) => {
-        // Load the group layer first to access its children
         return layer.load().then(() => {
           
-          // CRITICAL: Work on a copy of the layers array because we will be removing items
-          // .toArray() gives us a safe list to iterate while modifying the original group
+          // Get safe copy of layers to loop through
           const allSublayers = layer.layers.toArray();
           const select = document.getElementById("layerSelect");
 
           allSublayers.forEach((sublayer, index) => {
             
-            // --- REMOVE LAYERS 6, 7, 8 (Indices 5, 6, 7...) ---
-            // If index is 5 or greater, remove it from the group and skip processing
+            // REMOVE EXTRA LAYERS (Index 5 and above)
             if (index >= 5) {
-              console.log(`Removing extra layer: ${sublayer.title} (Index ${index})`);
               layer.remove(sublayer);
-              return; // Stop processing this iteration
+              return; 
             }
 
-            // --- PROCESS KEPT LAYERS (0-4) ---
-            
-            // 1. Rename
+            // DETERMINE NAME
+            // We use the manual list. If list runs out, use "Layer X"
+            let finalName = "";
             if (manualNames[index]) {
-              sublayer.title = manualNames[index];
+              finalName = manualNames[index];
             } else {
-              sublayer.title = `Layer ${index + 1}`;
+              finalName = `Layer ${index + 1}`;
             }
 
-            // 2. Legend & Visibility Fixes
-            // Force the legend to show by removing scale dependencies
+            // APPLY NAME TO LAYER & DROPDOWN
+            sublayer.title = finalName;
+            
+            // Force Legend Visibility
             sublayer.legendEnabled = true;
-            sublayer.minScale = 0; // Show at all zoom levels
+            sublayer.minScale = 0; 
             sublayer.maxScale = 0;
 
-            // 3. Setup Popups
+            // Popups
             sublayer.popupTemplate = {
-              title: sublayer.title,
+              title: finalName,
               content: [{
                 type: "fields",
                 fieldInfos: [{ fieldName: "*", visible: true, format: { digitSeparator: true, places: 2 } }]
               }]
             };
 
-            // 4. Add to Filter Dropdown
+            // Add to Filter Dropdown (USING THE FIXED NAME DIRECTLY)
             const option = document.createElement("option");
             option.value = sublayer.id;
-            option.text = sublayer.title;
+            option.text = finalName; // <--- This ensures the dropdown matches the list
             select.appendChild(option);
           });
 
-          // Add the Cleaned Group Layer to the map
           map.add(layer);
 
-          // Setup Filter Logic
+          // Filter Logic
           select.addEventListener("change", (event) => {
             const selectedId = event.target.value;
-            // Iterate only through the remaining layers in the live group
             layer.layers.forEach((sublayer) => {
               if (selectedId === "all") {
                 sublayer.visible = true;
@@ -143,14 +137,13 @@
             });
           });
 
-          // Zoom to data
           view.when(() => { if(layer.fullExtent) view.goTo(layer.fullExtent); });
         });
       }).catch((error) => {
         console.error("Layer load error: ", error);
       });
 
-      // --- 3. Widgets Setup ---
+      // --- 3. Widgets ---
       view.ui.add([new Home({ view: view }), new Locate({ view: view }), new Compass({ view: view })], "top-left");
       view.ui.add(new ScaleBar({ view: view, unit: "dual" }), "bottom-left");
       view.ui.add(new Search({ view: view }), "top-right");
@@ -161,23 +154,14 @@
       const layerListExpand = new Expand({
         view: view, content: new LayerList({ view: view }), group: "top-right", expandIcon: "layers", expandTooltip: "Layer List"
       });
-      
-      // LEGEND SETUP
-      // We pass 'view' so it watches all layers in the map
-      const legend = new Legend({ 
-        view: view,
-        style: { type: "card", layout: "auto" } // 'card' style often renders better for complex data
-      });
       const legendExpand = new Expand({
-        view: view, content: legend, group: "top-right", expandIcon: "legend", expandTooltip: "Legend"
+        view: view, content: new Legend({ view: view, style: "card" }), group: "top-right", expandIcon: "legend", expandTooltip: "Legend"
       });
 
-      // Measure Widget Helper
       function createMeasureWidget() {
         const div = document.createElement("div");
         div.id = "measurements";
         div.innerHTML = `<button id="distanceButton">Measure Distance</button><button id="areaButton">Measure Area</button><button id="clearButton">Clear</button>`;
-        
         let activeWidget = null;
         div.querySelector("#distanceButton").onclick = () => activateMeasure('distance');
         div.querySelector("#areaButton").onclick = () => activateMeasure('area');
@@ -187,7 +171,6 @@
           if (activeWidget) { view.ui.remove(activeWidget); activeWidget.destroy(); activeWidget = null; }
           div.querySelectorAll("button").forEach(b => b.classList.remove("active"));
           if (!type) return;
-
           const btnId = type === 'distance' ? '#distanceButton' : '#areaButton';
           div.querySelector(btnId).classList.add("active");
           activeWidget = type === 'distance' ? new DistanceMeasurement2D({ view: view }) : new AreaMeasurement2D({ view: view });
