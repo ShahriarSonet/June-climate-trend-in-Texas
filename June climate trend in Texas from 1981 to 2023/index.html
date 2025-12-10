@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+  <title>ArcGIS API - Research Dashboard (Cleaned Layers & Legend)</title>
+
+  <link rel="stylesheet" href="https://js.arcgis.com/4.31/esri/themes/light/main.css" />
+
+  <style>
+    html, body, #viewDiv { padding: 0; margin: 0; height: 100%; width: 100%; }
+    
+    /* Measurement UI styles */
+    #measurements { padding: 10px; background: white; width: 200px; }
+    #measurements button { width: 100%; margin-bottom: 5px; padding: 5px; cursor: pointer; background-color: #f3f3f3; border: 1px solid #ccc; }
+    #measurements button:hover { background-color: #e0e0e0; }
+    #measurements button.active { background-color: #0079c1; color: white; border-color: #005e95; }
+
+    /* Filter UI styles */
+    #filterDiv { padding: 10px; background: white; width: 240px; }
+    #layerSelect { width: 100%; padding: 5px; font-size: 14px; }
+    .filter-label { font-weight: bold; display: block; margin-bottom: 5px; }
+  </style>
+
+  <script src="https://js.arcgis.com/4.31/"></script>
+
+  <script>
+    require([
+      "esri/Map", "esri/views/MapView", "esri/Basemap", "esri/layers/VectorTileLayer", 
+      "esri/layers/TileLayer", "esri/layers/Layer", "esri/widgets/Search", "esri/widgets/Home", 
+      "esri/widgets/Locate", "esri/widgets/BasemapToggle", "esri/widgets/LayerList", 
+      "esri/widgets/Legend", "esri/widgets/Expand", "esri/widgets/DistanceMeasurement2D", 
+      "esri/widgets/AreaMeasurement2D", "esri/widgets/ScaleBar", "esri/widgets/Compass"
+    ], (
+      Map, MapView, Basemap, VectorTileLayer, TileLayer, Layer,
+      Search, Home, Locate, BasemapToggle, LayerList, Legend, Expand, 
+      DistanceMeasurement2D, AreaMeasurement2D, ScaleBar, Compass
+    ) => {
+
+      // --- 1. Custom Basemap Setup ---
+      const customBasemap = new Basemap({
+        baseLayers: [
+          new VectorTileLayer({ portalItem: { id: "e9cacfd187904614884c16aa52a21cac" } }),
+          new TileLayer({ portalItem: { id: "1e126e7520f9466c9ca28b8f28b5e500" } }),
+          new VectorTileLayer({ portalItem: { id: "39e84719631545d9bae1c0eda6d39aad" } }),
+          new VectorTileLayer({ portalItem: { id: "90dd6371b5ba4685aaf8c94abcca099e" } }),
+          new VectorTileLayer({ portalItem: { id: "fa420356f00f4466905a4afb31279316" } }),
+          new TileLayer({ portalItem: { id: "1b243539f4514b6ba35e7d995890db1d" }, opacity: 0.5 })
+        ],
+        title: "Custom Geography",
+        thumbnailUrl: "https://www.arcgis.com/sharing/rest/content/items/39e84719631545d9bae1c0eda6d39aad/info/thumbnail/thumbnail1603306823372.png"
+      });
+
+      const map = new Map({ basemap: customBasemap });
+      const view = new MapView({ container: "viewDiv", map: map, center: [-98, 39], zoom: 4 });
+
+      // --- 2. Load Data, Cleanup Layers, and Setup Widgets ---
+      
+      // Filter UI HTML
+      const filterDiv = document.createElement("div");
+      filterDiv.id = "filterDiv";
+      filterDiv.innerHTML = `
+        <span class="filter-label">Filter by Trend Type:</span>
+        <select id="layerSelect">
+          <option value="all">Show All Trends</option>
+        </select>
+      `;
+
+      // Names for the first 5 layers
+      const manualNames = [
+        "Negative Precipitation Trend",
+        "Positive Precipitation Trend",
+        "Mean Temp Trend (Increasing)",
+        "Humidity Trend (Drying)",
+        "Humidity Trend (Wetter)"
+      ];
+
+      Layer.fromPortalItem({
+        portalItem: { id: "97bdbae78254438884769a49618e1c5b" }
+      }).then((layer) => {
+        // Load the group layer first to access its children
+        return layer.load().then(() => {
+          
+          // CRITICAL: Work on a copy of the layers array because we will be removing items
+          // .toArray() gives us a safe list to iterate while modifying the original group
+          const allSublayers = layer.layers.toArray();
+          const select = document.getElementById("layerSelect");
+
+          allSublayers.forEach((sublayer, index) => {
+            
+            // --- REMOVE LAYERS 6, 7, 8 (Indices 5, 6, 7...) ---
+            // If index is 5 or greater, remove it from the group and skip processing
+            if (index >= 5) {
+              console.log(`Removing extra layer: ${sublayer.title} (Index ${index})`);
+              layer.remove(sublayer);
+              return; // Stop processing this iteration
+            }
+
+            // --- PROCESS KEPT LAYERS (0-4) ---
+            
+            // 1. Rename
+            if (manualNames[index]) {
+              sublayer.title = manualNames[index];
+            } else {
+              sublayer.title = `Layer ${index + 1}`;
+            }
+
+            // 2. Legend & Visibility Fixes
+            // Force the legend to show by removing scale dependencies
+            sublayer.legendEnabled = true;
+            sublayer.minScale = 0; // Show at all zoom levels
+            sublayer.maxScale = 0;
+
+            // 3. Setup Popups
+            sublayer.popupTemplate = {
+              title: sublayer.title,
+              content: [{
+                type: "fields",
+                fieldInfos: [{ fieldName: "*", visible: true, format: { digitSeparator: true, places: 2 } }]
+              }]
+            };
+
+            // 4. Add to Filter Dropdown
+            const option = document.createElement("option");
+            option.value = sublayer.id;
+            option.text = sublayer.title;
+            select.appendChild(option);
+          });
+
+          // Add the Cleaned Group Layer to the map
+          map.add(layer);
+
+          // Setup Filter Logic
+          select.addEventListener("change", (event) => {
+            const selectedId = event.target.value;
+            // Iterate only through the remaining layers in the live group
+            layer.layers.forEach((sublayer) => {
+              if (selectedId === "all") {
+                sublayer.visible = true;
+              } else {
+                sublayer.visible = (sublayer.id === selectedId);
+              }
+            });
+          });
+
+          // Zoom to data
+          view.when(() => { if(layer.fullExtent) view.goTo(layer.fullExtent); });
+        });
+      }).catch((error) => {
+        console.error("Layer load error: ", error);
+      });
+
+      // --- 3. Widgets Setup ---
+      view.ui.add([new Home({ view: view }), new Locate({ view: view }), new Compass({ view: view })], "top-left");
+      view.ui.add(new ScaleBar({ view: view, unit: "dual" }), "bottom-left");
+      view.ui.add(new Search({ view: view }), "top-right");
+
+      const filterExpand = new Expand({
+        view: view, content: filterDiv, group: "top-right", expandIcon: "filter", expandTooltip: "Filter Trends"
+      });
+      const layerListExpand = new Expand({
+        view: view, content: new LayerList({ view: view }), group: "top-right", expandIcon: "layers", expandTooltip: "Layer List"
+      });
+      
+      // LEGEND SETUP
+      // We pass 'view' so it watches all layers in the map
+      const legend = new Legend({ 
+        view: view,
+        style: { type: "card", layout: "auto" } // 'card' style often renders better for complex data
+      });
+      const legendExpand = new Expand({
+        view: view, content: legend, group: "top-right", expandIcon: "legend", expandTooltip: "Legend"
+      });
+
+      // Measure Widget Helper
+      function createMeasureWidget() {
+        const div = document.createElement("div");
+        div.id = "measurements";
+        div.innerHTML = `<button id="distanceButton">Measure Distance</button><button id="areaButton">Measure Area</button><button id="clearButton">Clear</button>`;
+        
+        let activeWidget = null;
+        div.querySelector("#distanceButton").onclick = () => activateMeasure('distance');
+        div.querySelector("#areaButton").onclick = () => activateMeasure('area');
+        div.querySelector("#clearButton").onclick = () => activateMeasure(null);
+
+        function activateMeasure(type) {
+          if (activeWidget) { view.ui.remove(activeWidget); activeWidget.destroy(); activeWidget = null; }
+          div.querySelectorAll("button").forEach(b => b.classList.remove("active"));
+          if (!type) return;
+
+          const btnId = type === 'distance' ? '#distanceButton' : '#areaButton';
+          div.querySelector(btnId).classList.add("active");
+          activeWidget = type === 'distance' ? new DistanceMeasurement2D({ view: view }) : new AreaMeasurement2D({ view: view });
+          activeWidget.viewModel.start();
+          view.ui.add(activeWidget, "bottom-left");
+        }
+        return new Expand({ view: view, content: div, group: "top-right", expandIcon: "measure", expandTooltip: "Measurement Tools" });
+      }
+      
+      view.ui.add([filterExpand, layerListExpand, legendExpand, createMeasureWidget()], "top-right");
+      view.ui.add(new BasemapToggle({ view: view, nextBasemap: "arcgis-imagery" }), "bottom-right");
+
+    });
+  </script>
+</head>
+<body>
+  <div id="viewDiv"></div>
+</body>
+</html>
